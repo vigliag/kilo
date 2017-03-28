@@ -1,4 +1,17 @@
-/* Kilo -- A very simple editor in less than 1-kilo lines of code (as counted
+// # Annotated version of Antirez's Kilo
+// ### annotations by @vigliag
+//
+// Kilo's is a very interesting piece of software, and a good albeit very simple
+// example of what good C code looks like.
+//
+// Kilo is already well documented, and the code is clear for people used to read C code. 
+// The main purpose of these annotations is thus to make the code (and C language) easier to read for
+// new students of the C language who want to move beyond the simplest didactic programs.
+// 
+// Writing these annotations has, of course, been a useful exercise to me as well
+//
+/*
+ * Kilo -- A very simple editor in less than 1-kilo lines of code (as counted
  *         by "cloc"). Does not depend on libcurses, directly emits VT100
  *         escapes on the terminal.
  *
@@ -32,8 +45,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// Program version, to be printed in the welcome message
 #define KILO_VERSION "0.0.1"
 
+// Feature test macros, defined before standard libraries are included, to decide how they should behave
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 
@@ -41,6 +56,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
+
+// A note on strings: In order to support NULL bytes inside of the file being edited, Kilo avoids relying on the standard functions iterating on strings (like strcmp), which expects strings to be null terminated. You'll always see strings treated as byte arrays whose NULL termination is enforced, and always coupled with their size. There are some exceptions, like `strlen` used on strings produced by the program itself, and like `strstr`, used with filenames (which are guaranteed not to have null bytes in them), and for text searching (which may miss matches occurring in rows containing a NULL byte AFAICT).
 #include <string.h>
 #include <stdlib.h>
 #include <ctype.h>
@@ -51,6 +68,7 @@
 #include <stdarg.h>
 #include <fcntl.h>
 
+// Constants defining the various types of highlighting
 /* Syntax highlight types */
 #define HL_NORMAL 0
 #define HL_NONPRINT 1
@@ -62,9 +80,14 @@
 #define HL_NUMBER 7
 #define HL_MATCH 8      /* Search match. */
 
+// Flags to be used in the editorSyntax struct below
+// currently unused as far as I can tell.
+// `<<` denotes the shift operator, and `1<<N` is used to obtain a number with the Nth bit from the right set to one
 #define HL_HIGHLIGHT_STRINGS (1<<0)
 #define HL_HIGHLIGHT_NUMBERS (1<<1)
 
+// Stores syntax highlighting settings for a given language
+// available syntax highlightings are configured directly in the editor's code, and are chosen at runtime according to the file extensions
 struct editorSyntax {
     char **filematch;
     char **keywords;
@@ -74,6 +97,7 @@ struct editorSyntax {
     int flags;
 };
 
+// This structure represents a single line of the file we are editing. Most of kilo's function manipulate `erow` structures
 /* This structure represents a single line of the file we are editing. */
 typedef struct erow {
     int idx;            /* Row index in the file, zero-based. */
@@ -86,10 +110,12 @@ typedef struct erow {
                            check. */
 } erow;
 
+// A triple represiting a color in rgb
 typedef struct hlcolor {
     int r,g,b;
 } hlcolor;
 
+// Definition of the current state of the editor
 struct editorConfig {
     int cx,cy;  /* Cursor x and y position in characters */
     int rowoff;     /* Offset of row displayed. */
@@ -106,8 +132,14 @@ struct editorConfig {
     struct editorSyntax *syntax;    /* Current syntax highlight, or NULL. */
 };
 
+// The current state of the editor is instantiated in a global variable `E`. The `static` modifier makes it initialized to local to this compilation unit (which is good practice, although it has no visible effect, since we have a single .c file)
+//
+// `E` will be initialized in the `initEditor` function, which is immediately called from `main()`
 static struct editorConfig E;
 
+// This Enum defines more constants used thorough the program to query if a specific key has been pressed.
+//
+// The function `editorReadKey` translates from the terminal's escape sequences to these constants
 enum KEY_ACTION{
         KEY_NULL = 0,       /* NULL */
         CTRL_C = 3,         /* Ctrl-c */
@@ -135,7 +167,10 @@ enum KEY_ACTION{
         PAGE_DOWN
 };
 
+// Prototype for the `editorSetStatusMessage` function (the source code is actually divided into sections)
 void editorSetStatusMessage(const char *fmt, ...);
+
+// ## Syntax highlighting DB
 
 /* =========================== Syntax highlights DB =========================
  *
@@ -158,6 +193,7 @@ void editorSetStatusMessage(const char *fmt, ...);
  *
  * There is no support to highlight patterns currently. */
 
+// Configuration for C/C++ syntax highlighting is included as example
 /* C / C++ */
 char *C_HL_extensions[] = {".c",".cpp",NULL};
 char *C_HL_keywords[] = {
@@ -169,6 +205,7 @@ char *C_HL_keywords[] = {
         "void|",NULL
 };
 
+// This global variable holds an array of all the available syntax highlighting
 /* Here we define an array of syntax highlights by extensions, keywords,
  * comments delimiters and flags. */
 struct editorSyntax HLDB[] = {
@@ -181,12 +218,25 @@ struct editorSyntax HLDB[] = {
     }
 };
 
+// Gets the number of entries defined in HLDB, since it is all known at compile time, it can be obtained with `sizeof`
+// (which is equivalent to `sizeof(HLDB)/sizeof(struct editorSyntax)`). Defining `HLDB_ENTRIES` as a macro makes it look like a constant, making the code clearer
 #define HLDB_ENTRIES (sizeof(HLDB)/sizeof(HLDB[0]))
 
+// ## Low level terminal handling
 /* ======================= Low level terminal handling ====================== */
+
+// the termios structure is used for both getting and setting the parameters of a terminal interface.
+// this global variable stores the settings of the terminal device before Kilo changes them to enable "Raw Mode".
+
+// at the beginning of the program, the following happens:
+// - main calls enableRawMode(STDIN_FILENO);
+// - enableRawMode stores the current settings in orig_termios, and sets the function `editorAtExit` as `atexit` callback
+// - `atexit` registers funcitons to be called when the main finishes or the exit() function is called
+// - at the program's' exit, when editorAtExit is called, it calls in turn disableRawMode(STDIN_FILENO), which restores the settings in orig_termios
 
 static struct termios orig_termios; /* In order to restore at exit.*/
 
+// This function is called before the program exits, to restore the original terminal settings 
 void disableRawMode(int fd) {
     /* Don't even check the return value as it's too late. */
     if (E.rawmode) {
@@ -195,6 +245,7 @@ void disableRawMode(int fd) {
     }
 }
 
+// this function has the only purpose to call disableRawMode, which can't be called directly by atexit because atexit requires a void(void) function
 /* Called at exit to avoid remaining in raw mode. */
 void editorAtExit(void) {
     disableRawMode(STDIN_FILENO);
@@ -234,17 +285,30 @@ fatal:
     return -1;
 }
 
+// Reads a key (which may be composed of several characters) from the terminal, handling escape sequence, and returing one of the constants in the `KEY_ACTION` enum.
+//
+// This funciton is called from `editorProcessKeypress`, which is in turn called in loop by `main()`, and from `editorFind`, to handle the find dialog 
 /* Read a key from the terminal put in raw mode, trying to handle
  * escape sequences. */
 int editorReadKey(int fd) {
     int nread;
     char c, seq[3];
+
+    // It reads the first byte of the sequence, retrying if no byte has been read.
+
+    // note that `read` is a blocking call, and since the program is single thread, the whole program will block and patiently wait on this line until a key has been pressed or read timeouts
+    //
+    // the while loop tells the program to try and read again if a timeout happens (basically ignoring it)
     while ((nread = read(fd,&c,1)) == 0);
+
+    //exits if read errors
     if (nread == -1) exit(1);
 
+    //the while loop 
     while(1) {
         switch(c) {
         case ESC:    /* escape sequence */
+            // tries to read a second and a third byte, in order to get an entire sequence. If reads timeouts, then "ESC" is returned
             /* If this is just an ESC, we'll timeout here. */
             if (read(fd,seq,1) == 0) return ESC;
             if (read(fd,seq+1,1) == 0) return ESC;
@@ -280,13 +344,20 @@ int editorReadKey(int fd) {
                 case 'F': return END_KEY;
                 }
             }
+
+            // if ESC was followed by two more characters, but those wheren't recognized, repeat the while loop and read two more
             break;
+
+        // any other character
         default:
             return c;
         }
     }
 }
 
+// this function queries the terminal device to get the current cursor position. It works with an input and an output file descriptor, which will be STDIN and STDOUT.
+//
+// note this function is never actually used to figure out where the cursor is, but indirectly as a fallback get the window size
 /* Use the ESC [6n escape sequence to query the horizontal cursor position
  * and return it. On error -1 is returned, on success the position of the
  * cursor is stored at *rows and *cols and 0 is returned. */
@@ -347,7 +418,13 @@ failed:
     return -1;
 }
 
+// ## Syntax highlight color scheme
+// Note all rows in the editor are initalized by the function `editorInsertRow`, and rendered (transforming TABS and non-printable-charaacters) by the `editorUpdateRow` function, both in the next section.
+//
+// The syntax highlighting functions work only on the rendered row `row->render`, and not on the actual file contents
+
 /* ====================== Syntax highlight color scheme  ==================== */
+
 
 int is_separator(int c) {
     return c == '\0' || isspace(c) || strchr(",.()+-/*=~%[];",c) != NULL;
@@ -357,27 +434,37 @@ int is_separator(int c) {
  * that starts at this row or at one before, and does not end at the end
  * of the row but spawns to the next row. */
 int editorRowHasOpenComment(erow *row) {
+    // return true if the last character of this row is highlighted as a comment
+    // and those last characters aren't the end of a multilne comment
     if (row->hl && row->rsize && row->hl[row->rsize-1] == HL_MLCOMMENT &&
         (row->rsize < 2 || (row->render[row->rsize-2] != '*' ||
-                            row->render[row->rsize-1] != '/'))) return 1;
+                            row->render[row->rsize-1] != '/'))) return 1; 
     return 0;
 }
 
+// allocates the `row->hl` array for the given row, containing the highlighting type for each character in the rendered row
 /* Set every byte of row->hl (that corresponds to every character in the line)
  * to the right syntax highlight type (HL_* defines). */
 void editorUpdateSyntax(erow *row) {
+    // row->hl is brought to the same size of the row by means of `realloc`
     row->hl = realloc(row->hl,row->rsize);
+    // all characters are initially marked with HL_NORMAL highlighting
     memset(row->hl,HL_NORMAL,row->rsize);
 
     if (E.syntax == NULL) return; /* No syntax, everything is HL_NORMAL. */
 
     int i, prev_sep, in_string, in_comment;
+
+    // pointer we'll use to move through the characters in the row
     char *p;
+
+    //shortainds to refer to the syntax settings
     char **keywords = E.syntax->keywords;
     char *scs = E.syntax->singleline_comment_start;
     char *mcs = E.syntax->multiline_comment_start;
     char *mce = E.syntax->multiline_comment_end;
 
+    // skips whitespace at the beginning of the line
     /* Point to the first non-space char. */
     p = row->render;
     i = 0; /* Current char offset */
@@ -385,6 +472,8 @@ void editorUpdateSyntax(erow *row) {
         p++;
         i++;
     }
+
+    // parser status variables. Note in_string is either 0, `'` or `"`, according to the kind of string
     prev_sep = 1; /* Tell the parser if 'i' points to start of word. */
     in_string = 0; /* Are we inside "" or '' ? */
     in_comment = 0; /* Are we inside multi-line comment? */
@@ -394,29 +483,35 @@ void editorUpdateSyntax(erow *row) {
     if (row->idx > 0 && editorRowHasOpenComment(&E.row[row->idx-1]))
         in_comment = 1;
 
+    // For each character until the end of the row
     while(*p) {
         /* Handle // comments. */
         if (prev_sep && *p == scs[0] && *(p+1) == scs[1]) {
             /* From here to end is a comment */
+            // **NOTE** There's a bug here, it should be `row->rsize` instead of `row->size`
             memset(row->hl+i,HL_COMMENT,row->size-i);
             return;
         }
 
         /* Handle multi line comments. */
         if (in_comment) {
+            // this char is for sure part of a comment. Maybe it is the end of a comment?
             row->hl[i] = HL_MLCOMMENT;
-            if (*p == mce[0] && *(p+1) == mce[1]) {
-                row->hl[i+1] = HL_MLCOMMENT;
+            if (*p == mce[0] && *(p+1) == mce[1]) { 
+                // if it is the first character of a multiline_comment_end, then the next char is the very last char of a comment
+                row->hl[i+1] = HL_MLCOMMENT; 
                 p += 2; i += 2;
                 in_comment = 0;
                 prev_sep = 1;
                 continue;
             } else {
+                // else we go on with the next char
                 prev_sep = 0;
                 p++; i++;
                 continue;
             }
         } else if (*p == mcs[0] && *(p+1) == mcs[1]) {
+            //this is the start of a multiline comment, mark the opening chars as comment, then continue
             row->hl[i] = HL_MLCOMMENT;
             row->hl[i+1] = HL_MLCOMMENT;
             p += 2; i += 2;
@@ -425,19 +520,23 @@ void editorUpdateSyntax(erow *row) {
             continue;
         }
 
+        // if we are in a string
         /* Handle "" and '' */
         if (in_string) {
             row->hl[i] = HL_STRING;
             if (*p == '\\') {
+                // the string continues if this character is an escape character
                 row->hl[i+1] = HL_STRING;
                 p += 2; i += 2;
                 prev_sep = 0;
                 continue;
             }
+            // if the character matches the one which started the string, then end the string
             if (*p == in_string) in_string = 0;
             p++; i++;
             continue;
         } else {
+            // we are not in a string, look for the beginning chars. If found, set the kind of string we are in
             if (*p == '"' || *p == '\'') {
                 in_string = *p;
                 row->hl[i] = HL_STRING;
@@ -456,6 +555,7 @@ void editorUpdateSyntax(erow *row) {
         }
 
         /* Handle numbers */
+        // If a digit is at the start of a word, or after another digit, or after a decimal separator, then highlight as a number
         if ((isdigit(*p) && (prev_sep || row->hl[i-1] == HL_NUMBER)) ||
             (*p == '.' && i >0 && row->hl[i-1] == HL_NUMBER)) {
             row->hl[i] = HL_NUMBER;
@@ -467,11 +567,13 @@ void editorUpdateSyntax(erow *row) {
         /* Handle keywords and lib calls */
         if (prev_sep) {
             int j;
+            // linear search through the defined keywords (until the final NULL keyword) using memcmp. A keyword word must match a keyword and be followed by a separator
             for (j = 0; keywords[j]; j++) {
                 int klen = strlen(keywords[j]);
                 int kw2 = keywords[j][klen-1] == '|';
                 if (kw2) klen--;
 
+                // *NOTE* there's a bug here, as p may not have klen characters after it (memcmp may go out of the buffer)
                 if (!memcmp(p,keywords[j],klen) &&
                     is_separator(*(p+klen)))
                 {
@@ -483,6 +585,7 @@ void editorUpdateSyntax(erow *row) {
                 }
             }
             if (keywords[j] != NULL) {
+                // if we are not at the end of the keywords array, then we found a word, the pointer was already advanced
                 prev_sep = 0;
                 continue; /* We had a keyword match */
             }
@@ -526,6 +629,8 @@ void editorSelectSyntaxHighlight(char *filename) {
             char *p;
             int patlen = strlen(s->filematch[i]);
             if ((p = strstr(filename,s->filematch[i])) != NULL) {
+                // There is a common part between the filename and the syntax filematch. 
+                // We have found the right syntax if filematch does not start with a "." (we are not matching by extensions), or the common part finishes with the string terminator
                 if (s->filematch[i][0] != '.' || p[patlen] == '\0') {
                     E.syntax = s;
                     return;
@@ -536,8 +641,14 @@ void editorSelectSyntaxHighlight(char *filename) {
     }
 }
 
+// ## Editor rows implementation
 /* ======================= Editor rows implementation ======================= */
 
+// `editorUpdateRow` recomputes the rendered version of a row.
+//
+// It counts the number of tabs in a row, allocates the new row->render array, then populates it, copying `row->chars` to `row->render` while expanding tabs to 8 spaces
+//
+// Note that in the current version of Kilo, contrarily to what the comment says, this function doesn't actually handle nonprintable characters, which are instead handled by `editorRefreshScreen` when the screen is actually drawn
 /* Update the rendered version and the syntax highlight of a row. */
 void editorUpdateRow(erow *row) {
     int tabs = 0, nonprint = 0, j, idx;
@@ -565,10 +676,10 @@ void editorUpdateRow(erow *row) {
     editorUpdateSyntax(row);
 }
 
+// `editorInsertRow` allocates a row at a given position, with a given content. This is the only function allocating new `erow` structures, by resizing the `E.row` array through realloc. It is called from several places in the program (when a file is read, to name one).
 /* Insert a row at the specified position, shifting the other rows on the bottom
  * if required. */
 void editorInsertRow(int at, char *s, size_t len) {
-    if (at > E.numrows) return;
     E.row = realloc(E.row,sizeof(erow)*(E.numrows+1));
     if (at != E.numrows) {
         memmove(E.row+at+1,E.row+at,sizeof(E.row[0])*(E.numrows-at));
@@ -603,11 +714,14 @@ void editorDelRow(int at) {
     row = E.row+at;
     editorFreeRow(row);
     memmove(E.row+at,E.row+at+1,sizeof(E.row[0])*(E.numrows-at-1));
+
+    // BUG: should be idx--. There's one less row, so the id of all following rows should be decremented
     for (int j = at; j < E.numrows-1; j++) E.row[j].idx++;
     E.numrows--;
     E.dirty++;
 }
 
+// This function is used to save the file back to disk. It first counts the bytes in all the rows by summing their size, then allocates a new string of the right length and copies row contents there
 /* Turn the editor rows into a single heap-allocated string.
  * Returns the pointer to the heap-allocated string and populate the
  * integer pointed by 'buflen' with the size of the string, escluding
@@ -677,10 +791,13 @@ void editorRowDelChar(erow *row, int at) {
     E.dirty++;
 }
 
+// This function is called when processing a normal (character) keypress, it looks at the current cursor position and inserts the new character (passed as argument) in there
 /* Insert the specified char at the current prompt position. */
 void editorInsertChar(int c) {
     int filerow = E.rowoff+E.cy;
     int filecol = E.coloff+E.cx;
+
+    // The cursor is allowed to go past the last row of the file (on rows marked with '~'). We check if that's the case and insert the new row if needed.
     erow *row = (filerow >= E.numrows) ? NULL : &E.row[filerow];
 
     /* If the row where the cursor is currently located does not exist in our
@@ -698,6 +815,7 @@ void editorInsertChar(int c) {
     E.dirty++;
 }
 
+// this function is called when processing the ENTER keypress
 /* Inserting a newline is slightly complex as we have to handle inserting a
  * newline in the middle of a line, splitting the line as needed. */
 void editorInsertNewline(void) {
@@ -726,6 +844,7 @@ void editorInsertNewline(void) {
         editorUpdateRow(row);
     }
 fixcursor:
+    //move the cursor to the new row, scrolling the screen if needed
     if (E.cy == E.screenrows-1) {
         E.rowoff++;
     } else {
@@ -735,12 +854,14 @@ fixcursor:
     E.coloff = 0;
 }
 
+// Called when processing BACKSPACE
 /* Delete the char at the current prompt position. */
 void editorDelChar() {
     int filerow = E.rowoff+E.cy;
     int filecol = E.coloff+E.cx;
     erow *row = (filerow >= E.numrows) ? NULL : &E.row[filerow];
 
+    // if the cursor is on a non-existing row, or at the very beginning of the file, return
     if (!row || (filecol == 0 && filerow == 0)) return;
     if (filecol == 0) {
         /* Handle the case of column 0, we need to move the current line
@@ -749,23 +870,29 @@ void editorDelChar() {
         editorRowAppendString(&E.row[filerow-1],row->chars,row->size);
         editorDelRow(filerow);
         row = NULL;
+
+        // move the cursor at the end of previous line, scroll the screen if needed
         if (E.cy == 0)
             E.rowoff--;
         else
             E.cy--;
         E.cx = filecol;
+
+        // scroll the screen horizontally to fit the previous row
         if (E.cx >= E.screencols) {
             int shift = (E.screencols-E.cx)+1;
             E.cx -= shift;
             E.coloff += shift;
         }
     } else {
+        // delete character from the row, horizontally scrolling if needed
         editorRowDelChar(row,filecol-1);
         if (E.cx == 0 && E.coloff)
             E.coloff--;
         else
             E.cx--;
     }
+    //if the row hasn't been deleted or merged with the previous one, update it's highlighting
     if (row) editorUpdateRow(row);
     E.dirty++;
 }
@@ -827,12 +954,14 @@ writeerr:
     return 1;
 }
 
+// ## Terminal update
 /* ============================= Terminal update ============================ */
 
 /* We define a very simple "append buffer" structure, that is an heap
  * allocated string where we can append to. This is useful in order to
  * write all the escape sequences in a buffer and flush them to the standard
  * output in a single call, to avoid flickering effects. */
+ // Copying our strings into this heap-allocated buffer is a good choice, allowing us work with with temporary, stack-allocated strings, which are then copied into the buffer and discarded. The alternative, allocating each string indivudally, and adding it's pointer to an array, would have been cumbersome and less efficient.
 struct abuf {
     char *b;
     int len;
@@ -840,6 +969,7 @@ struct abuf {
 
 #define ABUF_INIT {NULL,0}
 
+// Copies a string onto ab's buffer, resizing it first via `realloc`. Note this function is not suited for general use, as it may have perfomance issues when doing a lot of small appends. To make this function more efficient, it should allocate more space in advance into the buffer, and keep track both of the length of the buffer, and the length of the buffer's content.
 void abAppend(struct abuf *ab, const char *s, int len) {
     char *new = realloc(ab->b,ab->len+len);
 
@@ -863,9 +993,13 @@ void editorRefreshScreen(void) {
 
     abAppend(&ab,"\x1b[?25l",6); /* Hide cursor. */
     abAppend(&ab,"\x1b[H",3); /* Go home. */
+
+    // Iterates on each screenrow 
     for (y = 0; y < E.screenrows; y++) {
+        // Computes the corresponding filerow (index of the row in the file we want to display)
         int filerow = E.rowoff+y;
 
+        // If the file has no more rows to be display, then we want to check if the file is empty (in that case we print the welcome message on the row at 1/3rd height), else we print a single '~' and clear the rest of the line with `[0K`
         if (filerow >= E.numrows) {
             if (E.numrows == 0 && y == E.screenrows/3) {
                 char welcome[80];
@@ -884,14 +1018,23 @@ void editorRefreshScreen(void) {
             continue;
         }
 
+        // If there's a row in the file to display, we check the coloff (x scrolling) to compute the remaining portion of the row to display
         r = &E.row[filerow];
 
+        // In case the user scrolled horizontally, we compute the size of portion of row that is on the right of the left margin (we're going to ignore the first E.coloff characters)
         int len = r->rsize - E.coloff;
         int current_color = -1;
+
+        // if the row is not completely outside of our screen
         if (len > 0) {
+            // we compute the lenght of the row that we are actually going to draw (cutting off the part that is right of the right-margin)
             if (len > E.screencols) len = E.screencols;
+
+            // `c` points to the start of the row we are drawing (ignoring chars left of left margin) <br\>`hl` points to the corresponding hilighting  
             char *c = r->render+E.coloff;
             unsigned char *hl = r->hl+E.coloff;
+
+            // Draw each character of the row, also converting nonprintable characters (that have been marked as such in the hilighting phase by `editorUpdateSyntax`). The function keeps track of the current color, and prints color-chaging control seqeuences if needed.
             int j;
             for (j = 0; j < len; j++) {
                 if (hl[j] == HL_NONPRINT) {
@@ -921,6 +1064,7 @@ void editorRefreshScreen(void) {
                 }
             }
         }
+        // Resets color to normal, clear the rest of the line, insert carriage return
         abAppend(&ab,"\x1b[39m",5);
         abAppend(&ab,"\x1b[0K",4);
         abAppend(&ab,"\r\n",2);
@@ -983,10 +1127,12 @@ void editorSetStatusMessage(const char *fmt, ...) {
     E.statusmsg_time = time(NULL);
 }
 
+// ## Find mode
 /* =============================== Find mode ================================ */
 
 #define KILO_QUERY_LEN 256
 
+// This function handles the whole find-mode. The `fd` parameter is needed because this function will need to call editorReadKey and handle keypresses by itself (taking away control from the main "normal-mode" loop, and also calling editorRefreshScreen()`).
 void editorFind(int fd) {
     char query[KILO_QUERY_LEN+1] = {0};
     int qlen = 0;
@@ -995,6 +1141,9 @@ void editorFind(int fd) {
     int saved_hl_line = -1;  /* No saved HL */
     char *saved_hl = NULL;
 
+// Macro to restore the hilighting of a whole row. The `do{}while(0)` is a common trick to wrap complex macros so that they don't interfeere with the surrounding code
+//
+// BUG: saved_hl is heap-allocated, but this function doesn't free it before setting its pointer to NULL, leading to a memory leak
 #define FIND_RESTORE_HL do { \
     if (saved_hl) { \
         memcpy(E.row[saved_hl_line].hl,saved_hl, E.row[saved_hl_line].rsize); \
@@ -1011,6 +1160,7 @@ void editorFind(int fd) {
             "Search: %s (Use ESC/Arrows/Enter)", query);
         editorRefreshScreen();
 
+        // while in search mode, the keypresses are handled here. The keys allow to edit the query, go to the next/previous match, and exit find mode. 
         int c = editorReadKey(fd);
         if (c == DEL_KEY || c == CTRL_H || c == BACKSPACE) {
             if (qlen != 0) query[--qlen] = '\0';
@@ -1042,12 +1192,18 @@ void editorFind(int fd) {
             int match_offset = 0;
             int i, current = last_match;
 
+            // `i` is only used as counter, to move `current`, the actual row-offset in the file, `E.numrows` times, covering all the rows
             for (i = 0; i < E.numrows; i++) {
                 current += find_next;
-                if (current == -1) current = E.numrows-1;
+                
+                //handles wraparounds
+                if (current == -1) current = E.numrows-1; 
                 else if (current == E.numrows) current = 0;
+                
+                // checks if there's a match on this row. BUG: if the row contains a null char (they aren't handled in row.render by `editorUpdateRow`), only the first part of the row is searched
                 match = strstr(E.row[current].render,query);
                 if (match) {
+                    // column where the match starts in the row
                     match_offset = match-E.row[current].render;
                     break;
                 }
@@ -1055,6 +1211,8 @@ void editorFind(int fd) {
             find_next = 0;
 
             /* Highlight */
+
+            // restore hilighting for the previous matched row (if any)
             FIND_RESTORE_HL;
 
             if (match) {
@@ -1062,10 +1220,12 @@ void editorFind(int fd) {
                 last_match = current;
                 if (row->hl) {
                     saved_hl_line = current;
+                    //BUG: saved_hl is allocated here, but never freed (should be done in the FIND_RESTORE_HL macro)
                     saved_hl = malloc(row->rsize);
                     memcpy(saved_hl,row->hl,row->rsize);
                     memset(row->hl+match_offset,HL_MATCH,qlen);
                 }
+                // move the cursor to the match, scroll vertically so that the first row is on the matched row, and then horizontally os that the cursor is on the screen
                 E.cy = 0;
                 E.cx = match_offset;
                 E.rowoff = current;
@@ -1081,13 +1241,17 @@ void editorFind(int fd) {
     }
 }
 
+// ## Editor events handling
 /* ========================= Editor events handling  ======================== */
 
+// `editorMoveCursor` handles both cursor-changes and scrolling
 /* Handle cursor position change because arrow keys were pressed. */
 void editorMoveCursor(int key) {
     int filerow = E.rowoff+E.cy;
     int filecol = E.coloff+E.cx;
     int rowlen;
+
+    //if the cursor has a corresponding row in the file being edited (it can be on a '~' line)
     erow *row = (filerow >= E.numrows) ? NULL : &E.row[filerow];
 
     switch(key) {
@@ -1143,6 +1307,7 @@ void editorMoveCursor(int key) {
         }
         break;
     }
+    // handle vertical movement to a line with less characters
     /* Fix cx if the current line has not enough chars. */
     filerow = E.rowoff+E.cy;
     filecol = E.coloff+E.cx;
@@ -1157,6 +1322,7 @@ void editorMoveCursor(int key) {
     }
 }
 
+// calls `editorReadKey` then processes any keypress by calling the corresponding handler function. This function is continuosly called in the main loop, but is "bypassed" when in find-mode. 
 /* Process events arriving from the standard input, which is, the user
  * is typing stuff on the terminal. */
 #define KILO_QUIT_TIMES 3
@@ -1233,6 +1399,7 @@ int editorFileWasModified(void) {
     return E.dirty;
 }
 
+// Initis the global `editorConfig` `E` structure when the editor starts
 void initEditor(void) {
     E.cx = 0;
     E.cy = 0;
@@ -1252,6 +1419,7 @@ void initEditor(void) {
     E.screenrows -= 2; /* Get room for status bar. */
 }
 
+// Entrypoint for the editor, performs initialization, then executes the main `editorRefreshScreen` + `editorProcessKeypress` loop.
 int main(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr,"Usage: kilo <filename>\n");
