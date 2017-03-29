@@ -1,14 +1,16 @@
 // # Annotated version of Antirez's Kilo
 // ### annotations by @vigliag
 //
-// Kilo's is a very interesting piece of software, and a good albeit very simple
+// Kilo's is a very interesting piece of software and a good, albeit very simple,
 // example of what good C code looks like.
 //
 // Kilo is already well documented, and the code is clear for people used to read C code. 
-// The main purpose of these annotations is thus to make the code (and C language) easier to read for
-// new students of the C language who want to move beyond the simplest didactic programs.
+// Thus, the main purpose of these annotations is to make the code (and C language) easier to read for
+// anyone new to the C language who wishes to move beyond the simplest didactic programs.
 // 
-// Writing these annotations has, of course, been a useful exercise to me as well
+// Writing these annotations has, of course, been a useful exercise to me as well.
+// 
+// Note: The original comments of the author (@antirez) were left as part of the code.
 //
 /*
  * Kilo -- A very simple editor in less than 1-kilo lines of code (as counted
@@ -815,7 +817,7 @@ void editorInsertChar(int c) {
     E.dirty++;
 }
 
-// this function is called when processing the ENTER keypress
+// This function is called when processing the ENTER keypress
 /* Inserting a newline is slightly complex as we have to handle inserting a
  * newline in the middle of a line, splitting the line as needed. */
 void editorInsertNewline(void) {
@@ -897,6 +899,8 @@ void editorDelChar() {
     E.dirty++;
 }
 
+// The `editorOpen` method is called once, in the initialization process of the `main`, 
+// and it simply loads a given file into memory.
 /* Load the specified program in the editor memory and returns 0 on success
  * or 1 on error. */
 int editorOpen(char *filename) {
@@ -915,6 +919,7 @@ int editorOpen(char *filename) {
         return 1;
     }
 
+    // The file is loaded into memory row-by-row
     char *line = NULL;
     size_t linecap = 0;
     ssize_t linelen;
@@ -925,6 +930,7 @@ int editorOpen(char *filename) {
     }
     free(line);
     fclose(fp);
+    // `E.dirty` is set to zero, since the file has just been loaded and it has not been modified yet.
     E.dirty = 0;
     return 0;
 }
@@ -1244,7 +1250,7 @@ void editorFind(int fd) {
 // ## Editor events handling
 /* ========================= Editor events handling  ======================== */
 
-// `editorMoveCursor` handles both cursor-changes and scrolling
+// The function `editorMoveCursor` handles both cursor-changes and scrolling
 /* Handle cursor position change because arrow keys were pressed. */
 void editorMoveCursor(int key) {
     int filerow = E.rowoff+E.cy;
@@ -1322,7 +1328,8 @@ void editorMoveCursor(int key) {
     }
 }
 
-// calls `editorReadKey` then processes any keypress by calling the corresponding handler function. This function is continuosly called in the main loop, but is "bypassed" when in find-mode. 
+// Calls `editorReadKey` then processes any keypress by calling the corresponding handler function. 
+// This function is continuosly called in the main loop, but is "bypassed" when in find-mode. 
 /* Process events arriving from the standard input, which is, the user
  * is typing stuff on the terminal. */
 #define KILO_QUIT_TIMES 3
@@ -1399,7 +1406,7 @@ int editorFileWasModified(void) {
     return E.dirty;
 }
 
-// Initis the global `editorConfig` `E` structure when the editor starts
+// Initializes the global `editorConfig` `E` structure when the editor starts
 void initEditor(void) {
     E.cx = 0;
     E.cy = 0;
@@ -1419,7 +1426,8 @@ void initEditor(void) {
     E.screenrows -= 2; /* Get room for status bar. */
 }
 
-// Entrypoint for the editor, performs initialization, then executes the main `editorRefreshScreen` + `editorProcessKeypress` loop.
+// Entrypoint for the editor, performs initialization, 
+// then executes the main `editorRefreshScreen` + `editorProcessKeypress` loop.
 int main(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr,"Usage: kilo <filename>\n");
